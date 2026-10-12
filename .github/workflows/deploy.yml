@@ -59,7 +59,7 @@ jobs:
       - name: Push image
         run: docker push "$ECR_REPOSITORY:$IMAGE_TAG"
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
 
       - name: Kubeconfig
         run: aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER_NAME"
