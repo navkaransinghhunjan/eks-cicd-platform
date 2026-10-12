@@ -1,0 +1,29 @@
+replicaCount: 2
+
+image:
+  repository: CHANGE-ME.dkr.ecr.ap-south-1.amazonaws.com/eks-demo # set by CI
+  tag: dev                                                        # set by CI (sha-<short>)
+
+service:
+  port: 80
+
+ingress:
+  enabled: true
+  className: nginx
+  host: "" # empty = match any host (LB hostname); set a domain later
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  minAvailable: 1

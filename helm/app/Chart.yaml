@@ -1,0 +1,6 @@
+apiVersion: v2
+name: eks-demo
+description: FastAPI demo service deployed by the eks-cicd-platform pipeline
+type: application
+version: 0.1.0
+appVersion: "dev"

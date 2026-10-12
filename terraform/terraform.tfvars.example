@@ -1,0 +1,4 @@
+tf_state_bucket      = "CHANGE-ME-tfstate-123456789012"
+admin_principal_arns = ["arn:aws:iam::123456789012:user/navkaran"]
+# region             = "ap-south-1"
+# node_capacity_type = "ON_DEMAND"
