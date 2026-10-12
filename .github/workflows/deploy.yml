@@ -47,7 +47,7 @@ jobs:
         run: docker build -t "$ECR_REPOSITORY:$IMAGE_TAG" app
 
       - name: Trivy scan (gate before push)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
           severity: CRITICAL
