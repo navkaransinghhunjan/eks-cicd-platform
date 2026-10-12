@@ -1,0 +1,117 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+    paths: ["app/**", "helm/**", ".github/workflows/deploy.yml"]
+  workflow_dispatch:
+
+# One deploy at a time — also keeps install.log appends ordered
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  CLUSTER_NAME: ${{ vars.CLUSTER_NAME }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+  LOGS_BUCKET: ${{ vars.LOGS_BUCKET }}
+  APP_NAME: eks-demo
+  NAMESPACE: eks-demo
+  ENVIRONMENT: prod
+  INGRESS_NGINX_CHART_VERSION: 4.11.3
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: prod
+    permissions:
+      id-token: write  # OIDC -> AWS
+      contents: write  # commit install.log back
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start timer + image tag
+        run: |
+          echo "DEPLOY_START=$(date +%s)" >> "$GITHUB_ENV"
+          echo "IMAGE_TAG=sha-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build image
+        run: docker build -t "$ECR_REPOSITORY:$IMAGE_TAG" app
+
+      - name: Trivy scan (gate before push)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Push image
+        run: docker push "$ECR_REPOSITORY:$IMAGE_TAG"
+
+      - uses: azure/setup-helm@v4
+
+      - name: Kubeconfig
+        run: aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER_NAME"
+
+      - name: Ensure ingress-nginx
+        run: |
+          helm upgrade --install ingress-nginx ingress-nginx \
+            --repo https://kubernetes.github.io/ingress-nginx \
+            --version "$INGRESS_NGINX_CHART_VERSION" \
+            --namespace ingress-nginx --create-namespace \
+            --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"=nlb \
+            --wait --timeout 10m
+
+      - name: Helm upgrade (auto-rollback on failure)
+        run: |
+          helm upgrade --install "$APP_NAME" helm/app \
+            --namespace "$NAMESPACE" --create-namespace \
+            --set image.repository="$ECR_REPOSITORY" \
+            --set image.tag="$IMAGE_TAG" \
+            --atomic --wait --timeout 5m --history-max 10
+
+      - name: Smoke test
+        run: |
+          host=""
+          for _ in $(seq 1 30); do
+            host="$(kubectl -n ingress-nginx get svc ingress-nginx-controller \
+              -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')"
+            [[ -n "$host" ]] && break; sleep 10
+          done
+          [[ -n "$host" ]] || { echo "no LB hostname"; exit 1; }
+          echo "LB: http://$host"
+          for _ in $(seq 1 30); do   # new NLB DNS can take a few minutes
+            if body="$(curl -fsS --max-time 5 "http://$host/")"; then
+              echo "$body"
+              grep -q "\"version\":\"$IMAGE_TAG\"" <<<"$body" && exit 0
+            fi
+            sleep 10
+          done
+          echo "smoke test failed: $IMAGE_TAG not serving"; exit 1
+
+      - name: Record deployment in install.log
+        if: always()
+        env:
+          STATUS: ${{ job.status }}
+        run: scripts/log-deploy.sh
+
+      - name: Commit install.log
+        if: always()
+        continue-on-error: true # e.g. branch protection; S3 copy is still authoritative
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add logs/install.log
+          git diff --cached --quiet && exit 0
+          git commit -m "chore(log): ${ENVIRONMENT} deploy ${IMAGE_TAG} [skip ci]"
+          git pull --rebase origin main
+          git push origin HEAD:main

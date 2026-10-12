@@ -1,0 +1,85 @@
+name: infra
+
+on:
+  pull_request:
+    paths: ["terraform/**", ".github/workflows/infra.yml"]
+  push:
+    branches: [main]
+    paths: ["terraform/**", ".github/workflows/infra.yml"]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: apply or destroy
+        type: choice
+        options: [apply, destroy]
+        default: apply
+
+concurrency:
+  group: terraform
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  TF_IN_AUTOMATION: "true"
+  TF_VAR_tf_state_bucket: ${{ vars.TF_STATE_BUCKET }}
+  TF_VAR_admin_principal_arns: ${{ vars.TF_ADMIN_PRINCIPAL_ARNS }}
+  TF_INIT: >-
+    terraform -chdir=terraform init -input=false
+    -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+    -backend-config="key=eks-cicd-platform/terraform.tfstate"
+    -backend-config="region=${{ vars.AWS_REGION }}"
+    -backend-config="encrypt=true"
+    -backend-config="use_lockfile=true"
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.TF_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - run: eval "$TF_INIT"
+      - name: terraform plan
+        run: |
+          terraform -chdir=terraform plan -input=false -lock=false -no-color -out=tfplan | tee plan.txt
+          {
+            echo "### Terraform plan"
+            echo '```'
+            grep -E '^(Plan:|No changes)' plan.txt || tail -n 20 plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  apply:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment: infra # add a required reviewer on this environment
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.TF_APPLY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - run: eval "$TF_INIT"
+      - name: terraform ${{ inputs.action || 'apply' }}
+        run: |
+          if [[ "${{ inputs.action }}" == "destroy" ]]; then
+            terraform -chdir=terraform destroy -input=false -auto-approve
+          else
+            terraform -chdir=terraform plan -input=false -out=tfplan
+            terraform -chdir=terraform apply -input=false tfplan
+          fi
