@@ -1,3 +1,4 @@
 # install.log — append-only deployment record, one line per pipeline run.
 # Written by scripts/log-deploy.sh. Source of truth: s3://<LOGS_BUCKET>/install.log (versioned).
 # Format: <utc_ts> | env= | app= | image= | commit= | helm_rev= | actor= | run= | status= | duration=
+2026-10-12T19:52:47Z | env=prod | app=eks-demo | image=sha-62b1d08 | commit=62b1d08 | helm_rev=n/a | actor=navkaransinghhunjan | run=38300535963 | status=FAILURE | duration=1s
