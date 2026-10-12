@@ -1,9 +1,9 @@
 name: deploy
 
+# Reference blueprint: manual trigger only, so nothing touches AWS (or costs money)
+# until you deliberately run it. To go live, restore:
+#   push: { branches: [main], paths: ["app/**", "helm/**"] }
 on:
-  push:
-    branches: [main]
-    paths: ["app/**", "helm/**", ".github/workflows/deploy.yml"]
   workflow_dispatch:
 
 # One deploy at a time — also keeps install.log appends ordered
@@ -23,20 +23,22 @@ env:
 
 jobs:
   deploy:
+    # Skip cleanly when AWS isn't wired up (repo variables not set)
+    if: vars.AWS_REGION != ''
     runs-on: ubuntu-latest
     environment: prod
     permissions:
       id-token: write  # OIDC -> AWS
       contents: write  # commit install.log back
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Start timer + image tag
         run: |
           echo "DEPLOY_START=$(date +%s)" >> "$GITHUB_ENV"
           echo "IMAGE_TAG=sha-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ vars.DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}

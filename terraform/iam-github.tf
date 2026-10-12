@@ -1,6 +1,6 @@
 # GitHub Actions -> AWS via OIDC. No long-lived access keys anywhere.
 # Three roles, each trusted only for one workflow context:
-#   tf-plan  : pull_request          -> read-only + state
+#   tf-plan  : pull_request / main   -> read-only + state
 #   tf-apply : environment "infra"   -> admin (protected by required reviewers)
 #   deploy   : environment "prod"    -> ECR push, EKS describe, log bucket
 
@@ -20,9 +20,9 @@ locals {
   github_oidc_arn = var.create_github_oidc_provider ? aws_iam_openid_connect_provider.github[0].arn : data.aws_iam_openid_connect_provider.github[0].arn
 
   github_subjects = {
-    tf_plan  = "repo:${var.github_repo}:pull_request"
-    tf_apply = "repo:${var.github_repo}:environment:infra"
-    deploy   = "repo:${var.github_repo}:environment:prod"
+    tf_plan  = ["repo:${var.github_repo}:pull_request", "repo:${var.github_repo}:ref:refs/heads/main"]
+    tf_apply = ["repo:${var.github_repo}:environment:infra"]
+    deploy   = ["repo:${var.github_repo}:environment:prod"]
   }
 }
 
@@ -43,7 +43,7 @@ data "aws_iam_policy_document" "github_trust" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = [each.value]
+      values   = each.value
     }
   }
 }

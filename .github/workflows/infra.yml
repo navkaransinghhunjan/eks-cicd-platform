@@ -1,18 +1,17 @@
 name: infra
 
+# Reference blueprint: manual trigger only (no AWS calls, no cost).
+# To go live, add back:
+#   pull_request: { paths: ["terraform/**"] }      -> plan
+#   push: { branches: [main], paths: ["terraform/**"] } -> apply
 on:
-  pull_request:
-    paths: ["terraform/**", ".github/workflows/infra.yml"]
-  push:
-    branches: [main]
-    paths: ["terraform/**", ".github/workflows/infra.yml"]
   workflow_dispatch:
     inputs:
       action:
-        description: apply or destroy
+        description: plan (read-only), apply, or destroy
         type: choice
-        options: [apply, destroy]
-        default: apply
+        options: [plan, apply, destroy]
+        default: plan
 
 concurrency:
   group: terraform
@@ -33,17 +32,17 @@ env:
 
 jobs:
   plan:
-    if: github.event_name == 'pull_request'
+    if: vars.AWS_REGION != '' && (github.event_name == 'pull_request' || inputs.action == 'plan')
     runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_wrapper: false
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ vars.TF_PLAN_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
@@ -59,18 +58,18 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   apply:
-    if: github.event_name != 'pull_request'
+    if: vars.AWS_REGION != '' && github.event_name != 'pull_request' && inputs.action != 'plan'
     runs-on: ubuntu-latest
     environment: infra # add a required reviewer on this environment
     permissions:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_wrapper: false
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ vars.TF_APPLY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
